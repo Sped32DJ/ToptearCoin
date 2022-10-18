@@ -290,8 +290,6 @@ RPCHelpMan lockunspent()
 
     LOCK(pwallet->cs_wallet);
 
-    RPCTypeCheckArgument(request.params[0], UniValue::VBOOL);
-
     bool fUnlock = request.params[0].get_bool();
 
     const bool persistent{request.params[2].isNull() ? false : request.params[2].get_bool()};
@@ -304,9 +302,7 @@ RPCHelpMan lockunspent()
         return true;
     }
 
-    RPCTypeCheckArgument(request.params[1], UniValue::VARR);
-
-    const UniValue& output_params = request.params[1];
+    const UniValue& output_params = request.params[1].get_array();
 
     // Create and validate the COutPoints first.
 
@@ -520,7 +516,7 @@ RPCHelpMan listunspent()
                             {"maximumCount", RPCArg::Type::NUM, RPCArg::DefaultHint{"unlimited"}, "Maximum number of UTXOs"},
                             {"minimumSumAmount", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"unlimited"}, "Minimum sum value of all UTXOs in " + CURRENCY_UNIT + ""},
                         },
-                        "query_options"},
+                        RPCArgOptions{.oneline_description="query_options"}},
                 },
                 RPCResult{
                     RPCResult::Type::ARR, "", "",
@@ -543,6 +539,9 @@ RPCHelpMan listunspent()
                             {RPCResult::Type::BOOL, "solvable", "Whether we know how to spend this output, ignoring the lack of keys"},
                             {RPCResult::Type::BOOL, "reused", /*optional=*/true, "(only present if avoid_reuse is set) Whether this output is reused/dirty (sent to an address that was previously spent from)"},
                             {RPCResult::Type::STR, "desc", /*optional=*/true, "(only when solvable) A descriptor for spending this output"},
+                            {RPCResult::Type::ARR, "parent_descs", /*optional=*/false, "List of parent descriptors for the scriptPubKey of this coin.", {
+                                {RPCResult::Type::STR, "desc", "The descriptor string."},
+                            }},
                             {RPCResult::Type::BOOL, "safe", "Whether this output is considered safe to spend. Unconfirmed transactions\n"
                                                             "from outside keys and unconfirmed replacement transactions are considered unsafe\n"
                                                             "and are not eligible for spending by fundrawtransaction and sendtoaddress."},
@@ -563,19 +562,16 @@ RPCHelpMan listunspent()
 
     int nMinDepth = 1;
     if (!request.params[0].isNull()) {
-        RPCTypeCheckArgument(request.params[0], UniValue::VNUM);
         nMinDepth = request.params[0].getInt<int>();
     }
 
     int nMaxDepth = 9999999;
     if (!request.params[1].isNull()) {
-        RPCTypeCheckArgument(request.params[1], UniValue::VNUM);
         nMaxDepth = request.params[1].getInt<int>();
     }
 
     std::set<CTxDestination> destinations;
     if (!request.params[2].isNull()) {
-        RPCTypeCheckArgument(request.params[2], UniValue::VARR);
         UniValue inputs = request.params[2].get_array();
         for (unsigned int idx = 0; idx < inputs.size(); idx++) {
             const UniValue& input = inputs[idx];
@@ -591,7 +587,6 @@ RPCHelpMan listunspent()
 
     bool include_unsafe = true;
     if (!request.params[3].isNull()) {
-        RPCTypeCheckArgument(request.params[3], UniValue::VBOOL);
         include_unsafe = request.params[3].get_bool();
     }
 
@@ -638,7 +633,7 @@ RPCHelpMan listunspent()
         cctl.m_max_depth = nMaxDepth;
         cctl.m_include_unsafe_inputs = include_unsafe;
         LOCK(pwallet->cs_wallet);
-        vecOutputs = AvailableCoinsListUnspent(*pwallet, &cctl, nMinimumAmount, nMaximumAmount, nMinimumSumAmount, nMaximumCount).all();
+        vecOutputs = AvailableCoinsListUnspent(*pwallet, &cctl, nMinimumAmount, nMaximumAmount, nMinimumSumAmount, nMaximumCount).All();
     }
 
     LOCK(pwallet->cs_wallet);
@@ -722,6 +717,7 @@ RPCHelpMan listunspent()
                 entry.pushKV("desc", descriptor->ToString());
             }
         }
+        PushParentDescriptors(*pwallet, scriptPubKey, entry);
         if (avoid_reuse) entry.pushKV("reused", reused);
         entry.pushKV("safe", out.safe);
         results.push_back(entry);

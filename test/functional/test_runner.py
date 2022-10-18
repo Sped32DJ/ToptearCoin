@@ -186,6 +186,7 @@ BASE_SCRIPTS = [
     'wallet_signrawtransactionwithwallet.py --legacy-wallet',
     'wallet_signrawtransactionwithwallet.py --descriptors',
     'rpc_signrawtransactionwithkey.py',
+    'p2p_headers_sync_with_minchainwork.py',
     'rpc_rawtransaction.py --legacy-wallet',
     'wallet_groups.py --legacy-wallet',
     'wallet_transactiontime_rescan.py --descriptors',
@@ -230,8 +231,7 @@ BASE_SCRIPTS = [
     'rpc_getblockfrompeer.py',
     'rpc_invalidateblock.py',
     'feature_utxo_set_hash.py',
-    'feature_rbf.py --legacy-wallet',
-    'feature_rbf.py --descriptors',
+    'feature_rbf.py',
     'mempool_packages.py',
     'mempool_package_onemore.py',
     'rpc_createmultisig.py',
@@ -247,6 +247,7 @@ BASE_SCRIPTS = [
     'rpc_generate.py',
     'wallet_balance.py --legacy-wallet',
     'wallet_balance.py --descriptors',
+    'p2p_initial_headers_sync.py',
     'feature_nulldummy.py',
     'mempool_accept.py',
     'mempool_expiry.py',
@@ -265,6 +266,8 @@ BASE_SCRIPTS = [
     'wallet_implicitsegwit.py --legacy-wallet',
     'rpc_named_arguments.py',
     'feature_startupnotify.py',
+    'wallet_simulaterawtx.py --legacy-wallet',
+    'wallet_simulaterawtx.py --descriptors',
     'wallet_listsinceblock.py --legacy-wallet',
     'wallet_listsinceblock.py --descriptors',
     'wallet_listdescriptors.py --descriptors',
@@ -274,6 +277,7 @@ BASE_SCRIPTS = [
     'feature_dersig.py',
     'feature_cltv.py',
     'rpc_uptime.py',
+    'feature_discover.py',
     'wallet_resendwallettransactions.py --legacy-wallet',
     'wallet_resendwallettransactions.py --descriptors',
     'wallet_fallbackfee.py --legacy-wallet',
@@ -313,11 +317,14 @@ BASE_SCRIPTS = [
     'rpc_deriveaddresses.py',
     'rpc_deriveaddresses.py --usecli',
     'p2p_ping.py',
+    'rpc_scanblocks.py',
+    'p2p_sendtxrcncl.py',
     'rpc_scantxoutset.py',
     'feature_txindex_compatibility.py',
     'feature_unsupported_utxo_db.py',
     'feature_logging.py',
     'feature_anchors.py',
+    'mempool_datacarrier.py',
     'feature_coinstatsindex.py',
     'wallet_orphanedreward.py',
     'wallet_timelock.py',
@@ -326,6 +333,7 @@ BASE_SCRIPTS = [
     'feature_blocksdir.py',
     'wallet_startup.py',
     'p2p_i2p_ports.py',
+    'p2p_i2p_sessions.py',
     'feature_config_args.py',
     'feature_presegwit_node_upgrade.py',
     'feature_settings.py',
@@ -335,6 +343,7 @@ BASE_SCRIPTS = [
     'feature_dirsymlinks.py',
     'feature_help.py',
     'feature_shutdown.py',
+    'wallet_migration.py',
     'p2p_ibd_txrelay.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
@@ -548,14 +557,14 @@ def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=
     while i < test_count:
         if failfast and not all_passed:
             break
-        for test_result, testdir, stdout, stderr in job_queue.get_next():
+        for test_result, testdir, stdout, stderr, skip_reason in job_queue.get_next():
             test_results.append(test_result)
             i += 1
             done_str = "{}/{} - {}{}{}".format(i, test_count, BOLD[1], test_result.name, BOLD[0])
             if test_result.status == "Passed":
                 logging.debug("%s passed, Duration: %s s" % (done_str, test_result.time))
             elif test_result.status == "Skipped":
-                logging.debug("%s skipped" % (done_str))
+                logging.debug(f"{done_str} skipped ({skip_reason})")
             else:
                 all_passed = False
                 print("%s failed, Duration: %s s\n" % (done_str, test_result.time))
@@ -679,10 +688,12 @@ class TestHandler:
                     log_out.seek(0), log_err.seek(0)
                     [stdout, stderr] = [log_file.read().decode('utf-8') for log_file in (log_out, log_err)]
                     log_out.close(), log_err.close()
+                    skip_reason = None
                     if proc.returncode == TEST_EXIT_PASSED and stderr == "":
                         status = "Passed"
                     elif proc.returncode == TEST_EXIT_SKIPPED:
                         status = "Skipped"
+                        skip_reason = re.search(r"Test Skipped: (.*)", stdout).group(1)
                     else:
                         status = "Failed"
                     self.num_running -= 1
@@ -691,7 +702,7 @@ class TestHandler:
                         clearline = '\r' + (' ' * dot_count) + '\r'
                         print(clearline, end='', flush=True)
                     dot_count = 0
-                    ret.append((TestResult(name, status, int(time.time() - start_time)), testdir, stdout, stderr))
+                    ret.append((TestResult(name, status, int(time.time() - start_time)), testdir, stdout, stderr, skip_reason))
             if ret:
                 return ret
             if self.use_term_control:

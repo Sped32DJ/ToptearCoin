@@ -28,14 +28,34 @@ namespace node {
 ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSizes& cache_sizes,
                                     const ChainstateLoadOptions& options)
 {
-    auto is_coinsview_empty = [&](CChainState* chainstate) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+    auto is_coinsview_empty = [&](Chainstate* chainstate) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
         return options.reindex || options.reindex_chainstate || chainstate->CoinsTip().GetBestBlock().IsNull();
     };
 
+    if (!hashAssumeValid.IsNull()) {
+        LogPrintf("Assuming ancestors of block %s have valid signatures.\n", hashAssumeValid.GetHex());
+    } else {
+        LogPrintf("Validating signatures for all blocks.\n");
+    }
+    LogPrintf("Setting nMinimumChainWork=%s\n", nMinimumChainWork.GetHex());
+    if (nMinimumChainWork < UintToArith256(chainman.GetConsensus().nMinimumChainWork)) {
+        LogPrintf("Warning: nMinimumChainWork set below default value of %s\n", chainman.GetConsensus().nMinimumChainWork.GetHex());
+    }
+    if (nPruneTarget == std::numeric_limits<uint64_t>::max()) {
+        LogPrintf("Block pruning enabled.  Use RPC call pruneblockchain(height) to manually prune block and undo files.\n");
+    } else if (nPruneTarget) {
+        LogPrintf("Prune configured to target %u MiB on disk for block and undo files.\n", nPruneTarget / 1024 / 1024);
+    }
+
     LOCK(cs_main);
-    chainman.InitializeChainstate(options.mempool);
     chainman.m_total_coinstip_cache = cache_sizes.coins;
     chainman.m_total_coinsdb_cache = cache_sizes.coins_db;
+
+    // Load the fully validated chainstate.
+    chainman.InitializeChainstate(options.mempool);
+
+    // Load a chain created from a UTXO snapshot, if any exist.
+    chainman.DetectSnapshotChainstate(options.mempool);
 
     auto& pblocktree{chainman.m_blockman.m_block_tree_db};
     // new CBlockTreeDB tries to delete the existing file, which
@@ -83,12 +103,20 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
         return {ChainstateLoadStatus::FAILURE, _("Error initializing block database")};
     }
 
+    // Conservative value which is arbitrarily chosen, as it will ultimately be changed
+    // by a call to `chainman.MaybeRebalanceCaches()`. We just need to make sure
+    // that the sum of the two caches (40%) does not exceed the allowable amount
+    // during this temporary initialization state.
+    double init_cache_fraction = 0.2;
+
     // At this point we're either in reindex or we've loaded a useful
     // block tree into BlockIndex()!
 
-    for (CChainState* chainstate : chainman.GetAll()) {
+    for (Chainstate* chainstate : chainman.GetAll()) {
+        LogPrintf("Initializing chainstate %s\n", chainstate->ToString());
+
         chainstate->InitCoinsDB(
-            /*cache_size_bytes=*/cache_sizes.coins_db,
+            /*cache_size_bytes=*/chainman.m_total_coinsdb_cache * init_cache_fraction,
             /*in_memory=*/options.coins_db_in_memory,
             /*should_wipe=*/options.reindex || options.reindex_chainstate);
 
@@ -110,7 +138,7 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
         }
 
         // The on-disk coinsdb is now in a good state, create the cache
-        chainstate->InitCoinsCache(cache_sizes.coins);
+        chainstate->InitCoinsCache(chainman.m_total_coinstip_cache * init_cache_fraction);
         assert(chainstate->CanFlushToDisk());
 
         if (!is_coinsview_empty(chainstate)) {
@@ -125,24 +153,29 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
     if (!options.reindex) {
         auto chainstates{chainman.GetAll()};
         if (std::any_of(chainstates.begin(), chainstates.end(),
-                        [](const CChainState* cs) EXCLUSIVE_LOCKS_REQUIRED(cs_main) { return cs->NeedsRedownload(); })) {
+                        [](const Chainstate* cs) EXCLUSIVE_LOCKS_REQUIRED(cs_main) { return cs->NeedsRedownload(); })) {
             return {ChainstateLoadStatus::FAILURE, strprintf(_("Witness data for blocks after height %d requires validation. Please restart with -reindex."),
                                                              chainman.GetConsensus().SegwitHeight)};
         };
     }
+
+    // Now that chainstates are loaded and we're able to flush to
+    // disk, rebalance the coins caches to desired levels based
+    // on the condition of each chainstate.
+    chainman.MaybeRebalanceCaches();
 
     return {ChainstateLoadStatus::SUCCESS, {}};
 }
 
 ChainstateLoadResult VerifyLoadedChainstate(ChainstateManager& chainman, const ChainstateLoadOptions& options)
 {
-    auto is_coinsview_empty = [&](CChainState* chainstate) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
+    auto is_coinsview_empty = [&](Chainstate* chainstate) EXCLUSIVE_LOCKS_REQUIRED(::cs_main) {
         return options.reindex || options.reindex_chainstate || chainstate->CoinsTip().GetBestBlock().IsNull();
     };
 
     LOCK(cs_main);
 
-    for (CChainState* chainstate : chainman.GetAll()) {
+    for (Chainstate* chainstate : chainman.GetAll()) {
         if (!is_coinsview_empty(chainstate)) {
             const CBlockIndex* tip = chainstate->m_chain.Tip();
             if (tip && tip->nTime > GetTime() + MAX_FUTURE_BLOCK_TIME) {

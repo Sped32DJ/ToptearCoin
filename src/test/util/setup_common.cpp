@@ -108,6 +108,7 @@ BasicTestingSetup::BasicTestingSetup(const std::string& chainName, const std::ve
             "-logsourcelocations",
             "-logtimemicros",
             "-logthreadnames",
+            "-loglevel=trace",
             "-debug",
             "-debugexclude=libevent",
             "-debugexclude=leveldb",
@@ -219,17 +220,12 @@ ChainTestingSetup::~ChainTestingSetup()
     m_node.chainman.reset();
 }
 
-TestingSetup::TestingSetup(const std::string& chainName, const std::vector<const char*>& extra_args)
-    : ChainTestingSetup(chainName, extra_args)
+void TestingSetup::LoadVerifyActivateChainstate()
 {
-    // Ideally we'd move all the RPC tests to the functional testing framework
-    // instead of unit tests, but for now we need these here.
-    RegisterAllCoreRPCCommands(tableRPC);
-
     node::ChainstateLoadOptions options;
     options.mempool = Assert(m_node.mempool.get());
-    options.block_tree_db_in_memory = true;
-    options.coins_db_in_memory = true;
+    options.block_tree_db_in_memory = m_block_tree_db_in_memory;
+    options.coins_db_in_memory = m_coins_db_in_memory;
     options.reindex = node::fReindex;
     options.reindex_chainstate = m_args.GetBoolArg("-reindex-chainstate", false);
     options.prune = node::fPruneMode;
@@ -245,6 +241,22 @@ TestingSetup::TestingSetup(const std::string& chainName, const std::vector<const
     if (!m_node.chainman->ActiveChainstate().ActivateBestChain(state)) {
         throw std::runtime_error(strprintf("ActivateBestChain failed. (%s)", state.ToString()));
     }
+}
+
+TestingSetup::TestingSetup(
+    const std::string& chainName,
+    const std::vector<const char*>& extra_args,
+    const bool coins_db_in_memory,
+    const bool block_tree_db_in_memory)
+    : ChainTestingSetup(chainName, extra_args),
+      m_coins_db_in_memory(coins_db_in_memory),
+      m_block_tree_db_in_memory(block_tree_db_in_memory)
+{
+    // Ideally we'd move all the RPC tests to the functional testing framework
+    // instead of unit tests, but for now we need these here.
+    RegisterAllCoreRPCCommands(tableRPC);
+
+    LoadVerifyActivateChainstate();
 
     m_node.netgroupman = std::make_unique<NetGroupManager>(/*asmap=*/std::vector<bool>());
     m_node.addrman = std::make_unique<AddrMan>(*m_node.netgroupman,
@@ -262,8 +274,12 @@ TestingSetup::TestingSetup(const std::string& chainName, const std::vector<const
     }
 }
 
-TestChain100Setup::TestChain100Setup(const std::string& chain_name, const std::vector<const char*>& extra_args)
-    : TestingSetup{chain_name, extra_args}
+TestChain100Setup::TestChain100Setup(
+        const std::string& chain_name,
+        const std::vector<const char*>& extra_args,
+        const bool coins_db_in_memory,
+        const bool block_tree_db_in_memory)
+    : TestingSetup{CBaseChainParams::REGTEST, extra_args, coins_db_in_memory, block_tree_db_in_memory}
 {
     SetMockTime(1598887952);
     constexpr std::array<unsigned char, 32> vchKey = {
@@ -295,7 +311,7 @@ void TestChain100Setup::mineBlocks(int num_blocks)
 CBlock TestChain100Setup::CreateBlock(
     const std::vector<CMutableTransaction>& txns,
     const CScript& scriptPubKey,
-    CChainState& chainstate)
+    Chainstate& chainstate)
 {
     CBlock block = BlockAssembler{chainstate, nullptr}.CreateNewBlock(scriptPubKey)->block;
 
@@ -313,7 +329,7 @@ CBlock TestChain100Setup::CreateBlock(
 CBlock TestChain100Setup::CreateAndProcessBlock(
     const std::vector<CMutableTransaction>& txns,
     const CScript& scriptPubKey,
-    CChainState* chainstate)
+    Chainstate* chainstate)
 {
     if (!chainstate) {
         chainstate = &Assert(m_node.chainman)->ActiveChainstate();
@@ -321,7 +337,7 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
 
     const CBlock block = this->CreateBlock(txns, scriptPubKey, *chainstate);
     std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
-    Assert(m_node.chainman)->ProcessNewBlock(shared_pblock, true, nullptr);
+    Assert(m_node.chainman)->ProcessNewBlock(shared_pblock, true, true, nullptr);
 
     return block;
 }

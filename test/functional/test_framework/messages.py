@@ -65,6 +65,13 @@ FILTER_TYPE_BASIC = 0
 
 WITNESS_SCALE_FACTOR = 4
 
+DEFAULT_ANCESTOR_LIMIT = 25    # default max number of in-mempool ancestors
+DEFAULT_DESCENDANT_LIMIT = 25  # default max number of in-mempool descendants
+
+# Default setting for -datacarriersize. 80 bytes of data, +1 for OP_RETURN, +2 for the pushdata opcodes.
+MAX_OP_RETURN_RELAY = 83
+
+DEFAULT_MEMPOOL_EXPIRY_HOURS = 336  # hours
 
 def sha256(s):
     return hashlib.sha256(s).digest()
@@ -1831,3 +1838,31 @@ class msg_cfcheckpt:
     def __repr__(self):
         return "msg_cfcheckpt(filter_type={:#x}, stop_hash={:x})".format(
             self.filter_type, self.stop_hash)
+
+class msg_sendtxrcncl:
+    __slots__ = ("initiator", "responder", "version", "salt")
+    msgtype = b"sendtxrcncl"
+
+    def __init__(self):
+        self.initiator = False
+        self.responder = False
+        self.version = 0
+        self.salt = 0
+
+    def deserialize(self, f):
+        self.initiator = struct.unpack("<?", f.read(1))[0]
+        self.responder = struct.unpack("<?", f.read(1))[0]
+        self.version = struct.unpack("<I", f.read(4))[0]
+        self.salt = struct.unpack("<Q", f.read(8))[0]
+
+    def serialize(self):
+        r = b""
+        r += struct.pack("<?", self.initiator)
+        r += struct.pack("<?", self.responder)
+        r += struct.pack("<I", self.version)
+        r += struct.pack("<Q", self.salt)
+        return r
+
+    def __repr__(self):
+        return "msg_sendtxrcncl(initiator=%i, responder=%i, version=%lu, salt=%lu)" %\
+            (self.initiator, self.responder, self.version, self.salt)

@@ -642,7 +642,7 @@ public:
         "  send     Time since last message sent to the peer, in seconds\n"
         "  recv     Time since last message received from the peer, in seconds\n"
         "  txn      Time since last novel transaction received from the peer and accepted into our mempool, in minutes\n"
-        "           \"*\" - the peer requested we not relay transactions to it (relaytxes is false)\n"
+        "           \"*\" - whether we relay transactions to this peer (relaytxes is false)\n"
         "  blk      Time since last novel block passing initial validity checks received from the peer, in minutes\n"
         "  hb       High-bandwidth BIP152 compact block relay\n"
         "           \".\" (to)   - we selected the peer as a high-bandwidth peer\n"
@@ -911,7 +911,7 @@ static void GetWalletBalances(UniValue& result)
 
     UniValue balances(UniValue::VOBJ);
     for (const UniValue& wallet : wallets.getValues()) {
-        const std::string wallet_name = wallet.get_str();
+        const std::string& wallet_name = wallet.get_str();
         const UniValue getbalances = ConnectAndCallRPC(&rh, "getbalances", /* args=*/{}, wallet_name);
         const UniValue& balance = find_value(getbalances, "result")["mine"]["trusted"];
         balances.pushKV(wallet_name, balance);
